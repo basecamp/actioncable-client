@@ -673,6 +673,20 @@ func TestATerminalDialErrorStopsTheInitialConnection(t *testing.T) {
 	transport.refuseDial(t)
 }
 
+func TestANonTerminalConnectionErrorStillReconnects(t *testing.T) {
+	transport := newFakeTransport()
+	signedOut := errors.New("sign in again")
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, signedOut) }))
+	conn := welcomed(t, client, transport)
+
+	conn.Close()
+	transport.accept(t).welcome(t)
+
+	assert.NoError(t, client.Err(), "a retryable error stopped the client")
+}
+
 func TestATerminalConnectionErrorStopsSubscriptions(t *testing.T) {
 	transport := newFakeTransport()
 	client := newTestClient(t, transport,
