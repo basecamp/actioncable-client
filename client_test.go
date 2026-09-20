@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -656,6 +657,114 @@ func TestEveryDialAsksForTheHeaderAgain(t *testing.T) {
 	dialed := transport.dialedWith().Header
 	assert.Equal(t, "Bearer token-2", dialed.Get("Authorization"), "expected the redial to carry the credentials it asked for then")
 	assert.Equal(t, "https://app.example.com", dialed.Get("Origin"), "expected the headers set once to survive")
+}
+
+func TestATerminalDialErrorStopsTheInitialConnection(t *testing.T) {
+	transport := newFakeTransport()
+	denied := errors.New("connection denied")
+	transport.failNextDial(denied)
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, denied) }))
+
+	err := client.Connect(context.Background())
+	require.ErrorIs(t, err, denied)
+	require.ErrorIs(t, client.Err(), denied)
+	transport.refuseDial(t)
+}
+
+func TestANonTerminalConnectionErrorStillReconnects(t *testing.T) {
+	transport := newFakeTransport()
+	signedOut := errors.New("sign in again")
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, signedOut) }))
+	conn := welcomed(t, client, transport)
+
+	conn.Close()
+	transport.accept(t).welcome(t)
+
+	assert.NoError(t, client.Err(), "a retryable error stopped the client")
+}
+
+func TestATerminalConnectionErrorStopsSubscriptions(t *testing.T) {
+	transport := newFakeTransport()
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, io.EOF) }))
+	conn := welcomed(t, client, transport)
+
+	disconnections := make(chan bool, 1)
+	subscribing := subscribe(client, room(), OnDisconnected(func(willReconnect bool) {
+		disconnections <- willReconnect
+	}))
+	conn.expectCommand(t, CommandSubscribe, roomIdentifier)
+	conn.confirm(t, roomIdentifier)
+	subscription := <-subscribing
+	require.NoError(t, subscription.err, "Subscribe")
+
+	conn.Close()
+
+	select {
+	case willReconnect := <-disconnections:
+		assert.False(t, willReconnect, "OnDisconnected promised a reconnect after a terminal error")
+	case <-time.After(wait):
+		t.Fatal("OnDisconnected was not called after the terminal connection error")
+	}
+	select {
+	case <-client.Done():
+	case <-time.After(wait):
+		t.Fatal("client kept reconnecting after the terminal connection error")
+	}
+	require.ErrorIs(t, client.Err(), io.EOF)
+	select {
+	case <-subscription.subscription.Messages():
+		require.ErrorIs(t, subscription.subscription.Err(), io.EOF)
+	case <-time.After(wait):
+		t.Fatal("subscription stayed open after the client stopped")
+	}
+	transport.refuseDial(t)
+}
+
+func TestATerminalHeaderErrorStopsTheInitialConnection(t *testing.T) {
+	transport := newFakeTransport()
+	signedOut := errors.New("sign in again")
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, signedOut) }),
+		WithHeaderFunc(func(context.Context) (http.Header, error) { return nil, signedOut }))
+
+	err := client.Connect(context.Background())
+	require.ErrorIs(t, err, signedOut)
+	require.ErrorIs(t, client.Err(), signedOut)
+	transport.refuseDial(t)
+}
+
+func TestATerminalHeaderErrorStopsAReconnect(t *testing.T) {
+	transport := newFakeTransport()
+	signedOut := errors.New("sign in again")
+	var headers atomic.Int64
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, signedOut) }),
+		WithHeaderFunc(func(context.Context) (http.Header, error) {
+			if headers.Add(1) == 1 {
+				return http.Header{"Authorization": {"Bearer token"}}, nil
+			}
+			return nil, signedOut
+		}))
+
+	conn := welcomed(t, client, transport)
+	conn.Close()
+
+	select {
+	case <-client.Done():
+	case <-time.After(wait):
+		t.Fatal("client kept reconnecting after the terminal header error")
+	}
+	require.ErrorIs(t, client.Err(), signedOut)
+	assert.Equal(t, int64(2), headers.Load(), "expected one initial header and one failed reconnect header")
+	transport.refuseDial(t)
 }
 
 func TestADialIsTurnedDownWhenTheHeaderCannotBeBuilt(t *testing.T) {

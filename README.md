@@ -181,6 +181,19 @@ What it returns is merged over the headers already set, so an `Origin` or an API
 token given with `WithHeader` is kept. An error turns down that dial, and the
 client tries again on its backoff.
 
+When an application can identify an error that another connection attempt cannot
+repair, use `WithStopOnError`. The client stops with the original error, while
+other connection failures continue to retry:
+
+```go
+client := actioncable.New("wss://example.com/cable",
+	actioncable.WithHeaderFunc(headers),
+	actioncable.WithStopOnError(func(err error) bool {
+		return errors.Is(err, ErrSignedOut)
+	}),
+)
+```
+
 Rails also checks the `Origin` header and rejects a request that doesn't carry
 one. By default, the `Origin` is set to the server's URL, so `wss://example.com/cable`
 sends `https://example.com`. 

@@ -16,12 +16,13 @@ import (
 // running over it. Create one with New, start it with Connect, and hang up with
 // Close. It is safe for concurrent use.
 type Client struct {
-	url        string
-	transport  Transport
-	protocols  []Protocol
-	header     http.Header
-	headerFunc func(ctx context.Context) (http.Header, error)
-	logger     Logger
+	url         string
+	transport   Transport
+	protocols   []Protocol
+	header      http.Header
+	headerFunc  func(ctx context.Context) (http.Header, error)
+	stopOnError func(error) bool
+	logger      Logger
 
 	staleAfter     time.Duration
 	subscribeRetry time.Duration
@@ -141,8 +142,8 @@ func originOf(rawURL string) string {
 }
 
 // Connect starts the client and returns once the server has sent its welcome.
-// Failed connection attempts are retried until that happens, ctx is done, or
-// the server tells us not to come back.
+// Failed connection attempts are retried until that happens, ctx is done, the
+// server tells us not to come back, or WithStopOnError recognizes one as terminal.
 //
 // ctx bounds the wait, not a connection that got through: that lives until Close.
 // A Connect that returns an error leaves the client stopped, with nothing running
@@ -209,8 +210,8 @@ func (c *Client) Done() <-chan struct{} {
 
 // Err reports why the client stopped, and nil while it is still running or has
 // yet to be started. It is one of ErrClosed, ErrGaveUp, ErrUnsupportedSubprotocol,
-// ErrNoProtocols, a *DisconnectError, or the context error a failed Connect
-// returned.
+// ErrNoProtocols, a *DisconnectError, an error recognized by WithStopOnError,
+// or the context error a failed Connect returned.
 func (c *Client) Err() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -432,6 +433,10 @@ func (c *Client) session(ctx context.Context) error {
 func (c *Client) failed(ctx context.Context, err error) error {
 	if c.isStopped() || ctx.Err() != nil {
 		return err
+	}
+
+	if c.stopOnError != nil && c.stopOnError(err) {
+		return c.stop(err)
 	}
 
 	if c.countAttempt(err) == c.maxAttempts {
