@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -656,6 +657,59 @@ func TestEveryDialAsksForTheHeaderAgain(t *testing.T) {
 	dialed := transport.dialedWith().Header
 	assert.Equal(t, "Bearer token-2", dialed.Get("Authorization"), "expected the redial to carry the credentials it asked for then")
 	assert.Equal(t, "https://app.example.com", dialed.Get("Origin"), "expected the headers set once to survive")
+}
+
+func TestATerminalDialErrorStopsTheInitialConnection(t *testing.T) {
+	transport := newFakeTransport()
+	denied := errors.New("connection denied")
+	transport.failNextDial(denied)
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, denied) }))
+
+	err := client.Connect(context.Background())
+	require.ErrorIs(t, err, denied)
+	require.ErrorIs(t, client.Err(), denied)
+	transport.refuseDial(t)
+}
+
+func TestATerminalConnectionErrorStopsSubscriptions(t *testing.T) {
+	transport := newFakeTransport()
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, io.EOF) }))
+	conn := welcomed(t, client, transport)
+
+	disconnections := make(chan bool, 1)
+	subscribing := subscribe(client, room(), OnDisconnected(func(willReconnect bool) {
+		disconnections <- willReconnect
+	}))
+	conn.expectCommand(t, CommandSubscribe, roomIdentifier)
+	conn.confirm(t, roomIdentifier)
+	subscription := <-subscribing
+	require.NoError(t, subscription.err, "Subscribe")
+
+	conn.Close()
+
+	select {
+	case willReconnect := <-disconnections:
+		assert.False(t, willReconnect, "OnDisconnected promised a reconnect after a terminal error")
+	case <-time.After(wait):
+		t.Fatal("OnDisconnected was not called after the terminal connection error")
+	}
+	select {
+	case <-client.Done():
+	case <-time.After(wait):
+		t.Fatal("client kept reconnecting after the terminal connection error")
+	}
+	require.ErrorIs(t, client.Err(), io.EOF)
+	select {
+	case <-subscription.subscription.Messages():
+		require.ErrorIs(t, subscription.subscription.Err(), io.EOF)
+	case <-time.After(wait):
+		t.Fatal("subscription stayed open after the client stopped")
+	}
+	transport.refuseDial(t)
 }
 
 func TestATerminalHeaderErrorStopsTheInitialConnection(t *testing.T) {

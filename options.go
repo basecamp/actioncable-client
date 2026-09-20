@@ -50,9 +50,10 @@ func WithHeaderFunc(build func(ctx context.Context) (http.Header, error)) Option
 }
 
 // WithStopOnError sets a predicate for connection errors that retrying cannot
-// repair. When it returns true, the client stops with that error instead of
-// reconnecting. The predicate can use errors.Is or errors.As to recognize a
-// wrapped application error.
+// repair. It sees header, dial, and established-connection failures. When it
+// returns true, the client stops with that error instead of reconnecting. The
+// predicate can use errors.Is or errors.As to recognize a wrapped application
+// error.
 func WithStopOnError(stop func(error) bool) Option {
 	return func(c *Client) { c.stopOnError = stop }
 }
