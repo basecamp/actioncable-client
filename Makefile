@@ -1,4 +1,4 @@
-.PHONY: help all check fmt vet build test release-check release
+.PHONY: help all check fmt vet build test release-script-test release-check release
 
 CYAN  := \033[1;36m
 RESET := \033[0m
@@ -14,7 +14,7 @@ help:
 	@printf "  release VERSION=1.1.0 DRY_RUN=1\n"
 	@printf "                             Validate without creating a tag\n"
 
-check: fmt vet build test
+check: fmt vet build test release-script-test
 
 fmt:
 	@printf "\n$(CYAN)Checking formatting...$(RESET)\n"
@@ -31,6 +31,11 @@ build:
 test:
 	@printf "\n$(CYAN)Running tests...$(RESET)\n"
 	@go test -race ./...
+
+release-script-test:
+	@printf "\n$(CYAN)Testing release scripts...$(RESET)\n"
+	@bash -n scripts/release.sh scripts/validate-version.sh scripts/validate-version_test.sh
+	@scripts/validate-version_test.sh
 
 release-check: check
 

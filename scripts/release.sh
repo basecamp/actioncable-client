@@ -45,8 +45,8 @@ readonly RELEASE_DRY_RUN
 if [[ "$VERSION" == v* ]]; then
   die "Leave the leading v off the version (use ${VERSION#v})"
 fi
-if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-zA-Z0-9.-]+)?$ ]]; then
-  die "Invalid version '$VERSION' (expected X.Y.Z or X.Y.Z-suffix without leading zeros)"
+if ! version_error=$(scripts/validate-version.sh "$VERSION" 2>&1); then
+  die "$version_error"
 fi
 
 TAG="v$VERSION"
