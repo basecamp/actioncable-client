@@ -658,6 +658,47 @@ func TestEveryDialAsksForTheHeaderAgain(t *testing.T) {
 	assert.Equal(t, "https://app.example.com", dialed.Get("Origin"), "expected the headers set once to survive")
 }
 
+func TestATerminalHeaderErrorStopsTheInitialConnection(t *testing.T) {
+	transport := newFakeTransport()
+	signedOut := errors.New("sign in again")
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, signedOut) }),
+		WithHeaderFunc(func(context.Context) (http.Header, error) { return nil, signedOut }))
+
+	err := client.Connect(context.Background())
+	require.ErrorIs(t, err, signedOut)
+	require.ErrorIs(t, client.Err(), signedOut)
+	transport.refuseDial(t)
+}
+
+func TestATerminalHeaderErrorStopsAReconnect(t *testing.T) {
+	transport := newFakeTransport()
+	signedOut := errors.New("sign in again")
+	var headers atomic.Int64
+	client := newTestClient(t, transport,
+		WithBackoff(time.Millisecond, time.Millisecond),
+		WithStopOnError(func(err error) bool { return errors.Is(err, signedOut) }),
+		WithHeaderFunc(func(context.Context) (http.Header, error) {
+			if headers.Add(1) == 1 {
+				return http.Header{"Authorization": {"Bearer token"}}, nil
+			}
+			return nil, signedOut
+		}))
+
+	conn := welcomed(t, client, transport)
+	conn.Close()
+
+	select {
+	case <-client.Done():
+	case <-time.After(wait):
+		t.Fatal("client kept reconnecting after the terminal header error")
+	}
+	require.ErrorIs(t, client.Err(), signedOut)
+	assert.Equal(t, int64(2), headers.Load(), "expected one initial header and one failed reconnect header")
+	transport.refuseDial(t)
+}
+
 func TestADialIsTurnedDownWhenTheHeaderCannotBeBuilt(t *testing.T) {
 	transport := newFakeTransport()
 

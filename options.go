@@ -49,6 +49,14 @@ func WithHeaderFunc(build func(ctx context.Context) (http.Header, error)) Option
 	return func(c *Client) { c.headerFunc = build }
 }
 
+// WithStopOnError sets a predicate for connection errors that retrying cannot
+// repair. When it returns true, the client stops with that error instead of
+// reconnecting. The predicate can use errors.Is or errors.As to recognize a
+// wrapped application error.
+func WithStopOnError(stop func(error) bool) Option {
+	return func(c *Client) { c.stopOnError = stop }
+}
+
 // WithCookie is shorthand for sending one Cookie header.
 func WithCookie(cookie string) Option {
 	return func(c *Client) { c.setHeader("Cookie", cookie) }

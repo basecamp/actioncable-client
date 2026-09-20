@@ -16,12 +16,13 @@ import (
 // running over it. Create one with New, start it with Connect, and hang up with
 // Close. It is safe for concurrent use.
 type Client struct {
-	url        string
-	transport  Transport
-	protocols  []Protocol
-	header     http.Header
-	headerFunc func(ctx context.Context) (http.Header, error)
-	logger     Logger
+	url         string
+	transport   Transport
+	protocols   []Protocol
+	header      http.Header
+	headerFunc  func(ctx context.Context) (http.Header, error)
+	stopOnError func(error) bool
+	logger      Logger
 
 	staleAfter     time.Duration
 	subscribeRetry time.Duration
@@ -432,6 +433,10 @@ func (c *Client) session(ctx context.Context) error {
 func (c *Client) failed(ctx context.Context, err error) error {
 	if c.isStopped() || ctx.Err() != nil {
 		return err
+	}
+
+	if c.stopOnError != nil && c.stopOnError(err) {
+		return c.stop(err)
 	}
 
 	if c.countAttempt(err) == c.maxAttempts {
