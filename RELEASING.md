@@ -55,7 +55,7 @@ The workflow runs against the exact tag commit. It:
 1. Validates the tag and requires an annotated semantic-version tag.
 2. Verifies that the tag commit is on `main`.
 3. Runs `make release-check` again.
-4. Creates the GitHub Release with generated notes.
+4. Creates the GitHub Release with generated notes, marking a suffixed version as a prerelease.
 5. Requests the version from `proxy.golang.org` and fails if the proxy cannot resolve it.
 
 There are no binary archives, package-manager updates, signing keys, or release assets.

@@ -33,6 +33,8 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           if ! version_error=$(scripts/validate-version.sh "${TAG#v}" 2>&1); then
             echo "::error::$version_error"
             exit 1
@@ -41,8 +43,6 @@ jobs:
             echo "::error::Release tag '$TAG' is not annotated"
             exit 1
           fi
-          git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
       - name: Run release quality gate
         run: make release-check
@@ -72,6 +72,8 @@ jobs:
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub release $TAG already exists; continuing recovery"
+          elif [[ "$TAG" == *-* ]]; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG" --prerelease
           else
             gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
           fi
