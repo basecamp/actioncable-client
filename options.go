@@ -53,7 +53,7 @@ func WithHeaderFunc(build func(ctx context.Context) (http.Header, error)) Option
 // repair. It sees header, dial, and established-connection failures. When it
 // returns true, the client stops with that error instead of reconnecting. The
 // predicate can use errors.Is or errors.As to recognize a wrapped application
-// error.
+// error. It runs synchronously in the connection loop and must return promptly.
 func WithStopOnError(stop func(error) bool) Option {
 	return func(c *Client) { c.stopOnError = stop }
 }
