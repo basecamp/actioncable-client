@@ -84,12 +84,20 @@ if grep -q '^[[:space:]]*replace[[:space:]]' go.mod; then
   die "go.mod contains replace directives. Remove them before releasing."
 fi
 
+TAG_EXISTS=0
 if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
   EXISTING_SHA=$(git rev-parse "refs/tags/$TAG^{commit}")
-  if [[ "$EXISTING_SHA" == "$LOCAL" ]]; then
-    die "Tag $TAG already exists at HEAD. Re-run its GitHub workflow instead of pushing the tag again."
+  if [[ "$EXISTING_SHA" != "$LOCAL" ]]; then
+    die "Tag $TAG already exists at ${EXISTING_SHA:0:7}. Published Go module tags must not move; choose a new version."
   fi
-  die "Tag $TAG already exists at ${EXISTING_SHA:0:7}. Published Go module tags must not move; choose a new version."
+  if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+    die "Tag $TAG is already published. Re-run its GitHub workflow instead of pushing the tag again."
+  fi
+  if [[ "$(git cat-file -t "$TAG")" != "tag" ]]; then
+    die "Local tag $TAG is not annotated. Delete it and run the release command again."
+  fi
+  TAG_EXISTS=1
+  info "Reusing unpublished annotated tag $TAG at HEAD"
 fi
 
 version_lt() {
@@ -128,8 +136,10 @@ if [[ "$RELEASE_DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-info "Creating annotated tag $TAG"
-git tag -a "$TAG" -m "Release $TAG"
+if [[ "$TAG_EXISTS" -eq 0 ]]; then
+  info "Creating annotated tag $TAG"
+  git tag -a "$TAG" -m "Release $TAG"
+fi
 
 info "Pushing $TAG to origin"
 if ! git push --atomic origin "$DEFAULT_BRANCH" "$TAG"; then
