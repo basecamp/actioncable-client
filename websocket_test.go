@@ -137,7 +137,22 @@ func TestWebSocketTransportRefusesOversizedMessages(t *testing.T) {
 
 	server.accept(t).write(t, opText, []byte("far too long for eight bytes"))
 	_, err = readWithin(conn)
-	require.Error(t, err, "expected an error for an oversized message")
+	require.ErrorIs(t, err, ErrMessageTooBig)
+}
+
+func TestWebSocketTransportRefusesOversizedFragmentedMessages(t *testing.T) {
+	server := newTestServer(t)
+	transport := &WebSocketTransport{MaxMessageSize: 8}
+
+	conn, err := transport.Dial(context.Background(), server.url(), DialOptions{})
+	require.NoError(t, err, "Dial")
+	defer conn.Close()
+
+	peer := server.accept(t)
+	peer.writeFragment(t, opText, []byte("five "), false)
+	peer.writeFragment(t, opContinuation, []byte("more"), true)
+	_, err = readWithin(conn)
+	require.ErrorIs(t, err, ErrMessageTooBig)
 }
 
 func TestWebSocketTransportReportsServerClose(t *testing.T) {
@@ -145,10 +160,54 @@ func TestWebSocketTransportReportsServerClose(t *testing.T) {
 	conn := dial(t, server, DialOptions{})
 	defer conn.Close()
 
-	server.accept(t).write(t, opClose, binary.BigEndian.AppendUint16(nil, 1001))
+	server.accept(t).write(t, opClose, append(binary.BigEndian.AppendUint16(nil, 4401), "unauthorized"...))
 
 	_, err := readWithin(conn)
-	require.Error(t, err, "expected an error after the server closed")
+	var closed *CloseError
+	require.ErrorAs(t, err, &closed, "expected a CloseError after the server closed")
+	assert.Equal(t, 4401, closed.Code)
+	assert.Equal(t, "unauthorized", closed.Reason)
+}
+
+func TestWebSocketTransportReportsAServerCloseWithoutAStatus(t *testing.T) {
+	server := newTestServer(t)
+	conn := dial(t, server, DialOptions{})
+	defer conn.Close()
+
+	server.accept(t).write(t, opClose, nil)
+
+	_, err := readWithin(conn)
+	var closed *CloseError
+	require.ErrorAs(t, err, &closed, "expected a CloseError after the server closed")
+	assert.Equal(t, 1005, closed.Code)
+	assert.Empty(t, closed.Reason)
+}
+
+func TestWebSocketTransportClosesWithAStatus(t *testing.T) {
+	server := newTestServer(t)
+	conn := dial(t, server, DialOptions{})
+	peer := server.accept(t)
+
+	closer, ok := conn.(StatusCloser)
+	require.True(t, ok, "the built-in connection should implement StatusCloser")
+	require.NoError(t, closer.CloseWithStatus(4000, "done here"))
+
+	frame := peer.readFrame(t)
+	assert.Equal(t, byte(opClose), frame.opcode)
+	assert.Equal(t, uint16(4000), binary.BigEndian.Uint16(frame.payload))
+	assert.Equal(t, "done here", string(frame.payload[2:]))
+}
+
+func TestWebSocketTransportTruncatesACloseReasonToFitTheFrame(t *testing.T) {
+	server := newTestServer(t)
+	conn := dial(t, server, DialOptions{})
+	peer := server.accept(t)
+
+	require.NoError(t, conn.(StatusCloser).CloseWithStatus(4000, strings.Repeat("r", 200)))
+
+	frame := peer.readFrame(t)
+	assert.Equal(t, byte(opClose), frame.opcode)
+	assert.Len(t, frame.payload, 125, "a control frame's payload is at most 125 bytes")
 }
 
 func TestWebSocketTransportRefusesANonUpgradeResponse(t *testing.T) {
@@ -159,7 +218,23 @@ func TestWebSocketTransportRefusesANonUpgradeResponse(t *testing.T) {
 
 	transport := &WebSocketTransport{}
 	_, err := transport.Dial(context.Background(), websocketURL(server.URL), DialOptions{})
-	require.Error(t, err, "expected an error for a server that refuses to upgrade")
+	var refused *HandshakeError
+	require.ErrorAs(t, err, &refused, "expected a HandshakeError for a server that refuses to upgrade")
+	assert.Equal(t, http.StatusNotFound, refused.StatusCode)
+	assert.Equal(t, "404 Not Found", refused.Status)
+}
+
+func TestWebSocketTransportDoesNotFollowARedirect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	transport := &WebSocketTransport{}
+	_, err := transport.Dial(context.Background(), websocketURL(server.URL), DialOptions{})
+	var refused *HandshakeError
+	require.ErrorAs(t, err, &refused, "expected a HandshakeError for a redirect")
+	assert.Equal(t, http.StatusFound, refused.StatusCode)
 }
 
 func TestWebSocketTransportRefusesABadAcceptKey(t *testing.T) {
