@@ -350,7 +350,19 @@ client := actioncable.New(url, actioncable.WithTransport(coderTransport{}))
 ```
 
 The default is `WebSocketTransport`, which speaks RFC 6455 on the standard
-library and carries no dependencies.
+library and carries no dependencies. Three of its failures are typed, for a
+caller that wants to act on them rather than read them:
+
+- `*HandshakeError`, when the server answers the upgrade with anything but
+  101. `StatusCode` tells a redirect from a refusal.
+- `*CloseError`, from `Read` when the server sends a close frame, with its
+  `Code` and `Reason`.
+- `ErrMessageTooBig`, from `Read` when a message is larger than
+  `MaxMessageSize`. It is refused as soon as its length is known, before any
+  of it is read in.
+
+Its connections also implement `StatusCloser`: `CloseWithStatus` hangs up with
+a code and reason of the caller's choosing where `Close` sends 1000.
 
 
 ## Adding protocols

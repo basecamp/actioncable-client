@@ -202,7 +202,7 @@ func writeUpgradeRequest(socket net.Conn, endpoint *url.URL, key string, options
 
 func verifyUpgrade(response *http.Response, key string) error {
 	if response.StatusCode != http.StatusSwitchingProtocols {
-		return fmt.Errorf("actioncable: server refused the upgrade with %s", response.Status)
+		return &HandshakeError{StatusCode: response.StatusCode, Status: response.Status}
 	}
 	if !strings.EqualFold(response.Header.Get("Upgrade"), "websocket") {
 		return fmt.Errorf("actioncable: server did not upgrade to websocket (Upgrade: %q)", response.Header.Get("Upgrade"))
@@ -289,7 +289,7 @@ func (c *webSocketConn) Read(ctx context.Context) ([]byte, error) {
 				return nil, c.failf("received a continuation frame outside a fragmented message")
 			}
 			if int64(len(message)+len(frame.payload)) > c.maxMessageSize {
-				return nil, c.failf("message larger than %d bytes", c.maxMessageSize)
+				return nil, c.fail(fmt.Errorf("%w: a message past %d bytes", ErrMessageTooBig, c.maxMessageSize))
 			}
 			message = append(message, frame.payload...)
 			if frame.final {
@@ -303,7 +303,7 @@ func (c *webSocketConn) Read(ctx context.Context) ([]byte, error) {
 		case opClose:
 			// One close frame in reply, then the socket goes: Close sees the
 			// reply was already sent and won't send a second one.
-			c.writeFrame(ctx, opClose, closePayload(frame.payload))
+			c.writeFrame(ctx, opClose, closeReply(frame.payload))
 			c.Close()
 			return nil, closeErrorFrom(frame.payload)
 		default:
@@ -317,12 +317,20 @@ func (c *webSocketConn) Write(ctx context.Context, payload []byte) error {
 }
 
 func (c *webSocketConn) Close() error {
+	return c.CloseWithStatus(closeNormal, "")
+}
+
+// CloseWithStatus implements StatusCloser. The close frame is written with a
+// short deadline and the socket closed right after, whether or not the server
+// answers: waiting on a peer that may already be gone would hold up whoever is
+// hanging up.
+func (c *webSocketConn) CloseWithStatus(code int, reason string) error {
 	var err error
 	c.closeOnce.Do(func() {
 		c.writeMu.Lock()
 		if !c.closeSent {
 			c.socket.SetWriteDeadline(time.Now().Add(time.Second))
-			c.writeMasked(opClose, closePayload(nil))
+			c.writeMasked(opClose, closeFrame(code, reason))
 		}
 		c.writeMu.Unlock()
 
@@ -380,7 +388,7 @@ func (c *webSocketConn) readFrame() (webSocketFrame, error) {
 		}
 	}
 	if length > c.maxMessageSize {
-		return webSocketFrame{}, c.failf("frame larger than %d bytes", c.maxMessageSize)
+		return webSocketFrame{}, c.fail(fmt.Errorf("%w: a %d byte frame against a limit of %d", ErrMessageTooBig, length, c.maxMessageSize))
 	}
 
 	frame.payload = make([]byte, length)
@@ -442,24 +450,46 @@ func applyMask(mask [4]byte, payload []byte) {
 	}
 }
 
-func closePayload(received []byte) []byte {
-	code := uint16(1000)
+// RFC 6455 §7.4.1's two codes this side needs by name: the one a close frame
+// carries by default, and the one that stands in for a frame carrying none.
+const (
+	closeNormal   = 1000
+	closeNoStatus = 1005
+)
+
+// maxCloseReasonBytes is what fits in a close frame after the code: a control
+// frame's payload is at most 125 bytes.
+const maxCloseReasonBytes = 123
+
+// closeReply is the close frame sent back for one the server sent: its own
+// code echoed when we're allowed to send it ourselves — normal, going away, or
+// an application's own — and normal closure otherwise.
+func closeReply(received []byte) []byte {
+	code := closeNormal
 	if len(received) >= 2 {
-		// Echo the code back only when we're allowed to send it ourselves:
-		// normal, going away, or an application's own.
-		if echoed := binary.BigEndian.Uint16(received); echoed >= 3000 || echoed == 1000 || echoed == 1001 {
+		if echoed := int(binary.BigEndian.Uint16(received)); echoed >= 3000 || echoed == closeNormal || echoed == 1001 {
 			code = echoed
 		}
 	}
 
-	return binary.BigEndian.AppendUint16(nil, code)
+	return closeFrame(code, "")
+}
+
+// closeFrame is a close frame's payload: the code, then as much of the reason
+// as a control frame has room for.
+func closeFrame(code int, reason string) []byte {
+	if len(reason) > maxCloseReasonBytes {
+		reason = reason[:maxCloseReasonBytes]
+	}
+
+	return append(binary.BigEndian.AppendUint16(nil, uint16(code)), reason...)
 }
 
 func closeErrorFrom(payload []byte) error {
 	if len(payload) < 2 {
-		return io.EOF
+		return &CloseError{Code: closeNoStatus}
 	} else {
-		return fmt.Errorf("actioncable: server closed the connection: %d %s", binary.BigEndian.Uint16(payload), payload[2:])
+		return &CloseError{Code: int(binary.BigEndian.Uint16(payload)), Reason: string(payload[2:])}
 	}
 }
 
@@ -502,8 +532,14 @@ func (c *webSocketConn) watch(ctx context.Context, setDeadline func(time.Time) e
 // failf fails the connection: a frame we can't trust means the peer isn't
 // speaking the protocol, and reading on would be guesswork.
 func (c *webSocketConn) failf(reason string, args ...any) error {
+	return c.fail(fmt.Errorf("actioncable: "+reason, args...))
+}
+
+// fail fails the connection with an error already made, for the one failure a
+// caller wants to recognize by its sentinel rather than read.
+func (c *webSocketConn) fail(err error) error {
 	c.Close()
-	return fmt.Errorf("actioncable: "+reason, args...)
+	return err
 }
 
 func or[T int64 | time.Duration](value, fallback T) T {

@@ -39,3 +39,11 @@ type Conn interface {
 
 	Close() error
 }
+
+// A StatusCloser is a Conn that can say why it is hanging up. Close sends a
+// close frame with 1000 Normal Closure; CloseWithStatus sends one with the
+// code and reason given, for a caller with something to tell the server. The
+// built-in WebSocketTransport's connections implement it.
+type StatusCloser interface {
+	CloseWithStatus(code int, reason string) error
+}
