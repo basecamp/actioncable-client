@@ -1,8 +1,17 @@
 # Releasing
 
 One version number covers all seven clients, and one tag releases them. The tag
-is `vX.Y.Z`; pushing it starts eight workflows, seven that publish a package and
-one that writes the GitHub Release once the others are green.
+is `vX.Y.Z`. Pushing it starts the release workflows that are switched on and,
+once they are green, the one that writes the GitHub Release.
+
+**For now only Go and Rust release on a tag.** The other five workflows exist,
+adapted from basecamp-sdk, but take only a manual `workflow_dispatch`, which is
+always a dry run, so a tag publishes nothing for TypeScript, Python, Ruby,
+Kotlin or Swift. Each is switched on by restoring its `push: tags: ['v*']`
+trigger and adding it to the wait list in `release-github.yml`, once "Before the
+first release" below is done for its registry. The version still moves for all
+seven on every bump, so the day one is switched on it publishes the version
+everything else is already at.
 
 Published tags and published packages are immutable. Never move or reuse a
 release tag, even when its workflow fails. The Go module proxy, crates.io and
@@ -63,16 +72,16 @@ Every one of them re-runs that language's `make <language>-check` against the
 tagged commit, verifies the tag is an ancestor of `main`, and verifies the
 language's own version constant equals the tag before it publishes anything.
 
-| Workflow                   | Publishes                               | Where                            |
-|----------------------------|-----------------------------------------|----------------------------------|
-| `release-go.yml`           | the `go/vX.Y.Z` tag                     | proxy.golang.org                 |
-| `release-typescript.yml`   | `@37signals/actioncable`                | npm                              |
-| `release-python.yml`       | `actioncable-client`                    | PyPI                             |
-| `release-ruby.yml`         | `actioncable-client`                    | RubyGems                         |
-| `release-kotlin.yml`       | `com.basecamp:actioncable-client`       | GitHub Packages                  |
-| `release-rust.yml`         | `actioncable-client`                    | crates.io                        |
-| `release-swift.yml`        | nothing — the `vX.Y.Z` tag is the release | resolved by SwiftPM from this repository |
-| `release-github.yml`       | the GitHub Release and its notes        | this repository                  |
+| Workflow                   | Publishes                               | Where                            | On a tag |
+|----------------------------|-----------------------------------------|----------------------------------|----------|
+| `release-go.yml`           | the `go/vX.Y.Z` tag                     | proxy.golang.org                 | yes      |
+| `release-rust.yml`         | `actioncable-client`                    | crates.io                        | yes      |
+| `release-github.yml`       | the GitHub Release and its notes        | this repository                  | yes      |
+| `release-typescript.yml`   | `@37signals/actioncable`                | npm                              | not yet  |
+| `release-python.yml`       | `actioncable-client`                    | PyPI                             | not yet  |
+| `release-ruby.yml`         | `actioncable-client`                    | RubyGems                         | not yet  |
+| `release-kotlin.yml`       | `com.basecamp:actioncable-client`       | GitHub Packages                  | not yet  |
+| `release-swift.yml`        | nothing — the `vX.Y.Z` tag is the release | resolved by SwiftPM from this repository | not yet |
 
 Two of those need explaining.
 
@@ -87,10 +96,11 @@ be pointed at a subdirectory, so the root `Package.swift` — not
 the tag is the release. `test.yml` and `release-swift.yml` both build the root
 manifest so it cannot quietly stop naming a real source path.
 
-`release-github.yml` polls the other seven for the tag's own push-triggered
-runs and only writes the Release when all of them succeeded. A release whose
-notes advertise `pip install actioncable-client==2.1.0` should not exist before
-PyPI has it.
+`release-github.yml` polls the switched-on workflows for the tag's own
+push-triggered runs and only writes the Release when all of them succeeded. A
+release whose notes advertise a package should not exist before the registry
+has it, which is also why a workflow joins its wait list only when it starts
+publishing.
 
 
 ## The rehearsal
@@ -147,8 +157,10 @@ hand.
 
 ## Before the first release
 
-None of these exist yet. Each one is referenced by a workflow that will fail
-without it, and the reference is deliberate — it is the checklist.
+Items 1, 5 and 8 gate the first release as it stands, with Go and Rust
+publishing. The rest each gate switching one more language on: do the item,
+rehearse its workflow by hand, then restore its push trigger and add it to the
+wait list.
 
 1. **Rename the repository to `actioncable-client`.** Every package manifest,
    workflow and README already says that name. The `github.repository` guard in

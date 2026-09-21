@@ -28,7 +28,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          WORKFLOWS=("release-go.yml" "release-typescript.yml" "release-python.yml" "release-ruby.yml" "release-kotlin.yml" "release-rust.yml" "release-swift.yml")
+          # Only the languages that publish on a tag today. The other five
+          # release workflows are dispatch-only until their registries are
+          # set up (RELEASING.md); add each here when its push trigger returns.
+          WORKFLOWS=("release-go.yml" "release-rust.yml")
           TAG="${GITHUB_REF#refs/tags/}"
           MAX_WAIT=1800  # 30 minutes
           POLL=30

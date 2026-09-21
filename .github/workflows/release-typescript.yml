@@ -1,9 +1,15 @@
 name: Release TypeScript client
 
+# Not released automatically yet: a tag push does not run this. Only Go and
+# Rust publish on a tag for now. To turn this on, add the push trigger back —
+#
+#   push:
+#     tags:
+#       - 'v*'
+#
+# — and add this file to the wait list in release-github.yml. RELEASING.md's
+# "Before the first release" says what the registry needs first.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:  # Manual trigger is always dry-run (rehearsal mode)
 
 permissions: {}
