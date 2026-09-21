@@ -1,43 +1,55 @@
-.PHONY: help all check fmt vet build test release-script-test release-check release
+# The Action Cable clients. Every language directory owns its own gate; this
+# file runs them, and owns the one version number they share.
 
 CYAN  := \033[1;36m
 RESET := \033[0m
+
+# The order a reader expects, and the order `make check` runs them in.
+LANGUAGES      := go typescript python ruby kotlin rust swift
+# Kotlin has no Makefile: the root Makefile calls its Gradle tasks directly.
+MAKE_LANGUAGES := go typescript python ruby rust swift
+
+.PHONY: help all check $(addsuffix -check,$(LANGUAGES)) script-test release-check bump release
 
 all: check
 
 help:
 	@printf "$(CYAN)Targets$(RESET)\n"
-	@printf "  check                      Everything CI runs: fmt, vet, build, test\n"
-	@printf "  test                       Run the tests with the race detector\n"
-	@printf "  release-check              Run the release quality gate\n"
-	@printf "  release VERSION=1.1.0      Validate and push a release tag\n"
-	@printf "  release VERSION=1.1.0 DRY_RUN=1\n"
+	@printf "  check                      Every language's check, then the release scripts\n"
+	@printf "  <language>-check           One language: $(LANGUAGES)\n"
+	@printf "  script-test                Syntax-check and test the release scripts\n"
+	@printf "  bump VERSION=2.1.0         Write the version everywhere it lives\n"
+	@printf "  release VERSION=2.1.0      Validate and push the release tag\n"
+	@printf "  release VERSION=2.1.0 DRY_RUN=1\n"
 	@printf "                             Validate without creating a tag\n"
 
-check: fmt vet build test release-script-test
+check: $(addsuffix -check,$(LANGUAGES)) script-test
 
-fmt:
-	@printf "\n$(CYAN)Checking formatting...$(RESET)\n"
-	@test -z "$$(gofmt -l .)" || { gofmt -d .; exit 1; }
+$(addsuffix -check,$(MAKE_LANGUAGES)): %-check:
+	@printf "\n$(CYAN)=== $* ===$(RESET)\n"
+	@$(MAKE) --no-print-directory -C $* check
 
-vet:
-	@printf "\n$(CYAN)Vetting...$(RESET)\n"
-	@go vet ./...
+kotlin-check:
+	@printf "\n$(CYAN)=== kotlin ===$(RESET)\n"
+	@cd kotlin && ./gradlew check
 
-build:
-	@printf "\n$(CYAN)Building...$(RESET)\n"
-	@go build ./...
-
-test:
-	@printf "\n$(CYAN)Running tests...$(RESET)\n"
-	@go test -race ./...
-
-release-script-test:
-	@printf "\n$(CYAN)Testing release scripts...$(RESET)\n"
-	@bash -n scripts/release.sh scripts/validate-version.sh scripts/validate-version_test.sh
+script-test:
+	@printf "\n$(CYAN)=== release scripts ===$(RESET)\n"
+	@bash -n scripts/bump-version.sh scripts/release.sh scripts/validate-version.sh scripts/validate-version_test.sh
 	@scripts/validate-version_test.sh
 
+# What scripts/release.sh runs before it tags, and what the release workflows
+# run again against the tagged commit.
 release-check: check
 
+bump:
+ifndef VERSION
+	$(error VERSION is required. Usage: make bump VERSION=x.y.z)
+endif
+	@scripts/bump-version.sh $(VERSION)
+
 release:
+ifndef VERSION
+	$(error VERSION is required. Usage: make release VERSION=x.y.z)
+endif
 	@DRY_RUN=$(DRY_RUN) scripts/release.sh $(VERSION)

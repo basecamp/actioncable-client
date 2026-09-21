@@ -1,9 +1,9 @@
-# How to contribute to the Action Cable client
+# How to contribute to the Action Cable clients
 
-The Action Cable client uses GitHub
-[discussions](https://github.com/basecamp/actioncable-go/discussions) to track
+The Action Cable clients use GitHub
+[discussions](https://github.com/basecamp/actioncable-client/discussions) to track
 feature requests and questions, rather than [the issue
-tracker](https://github.com/basecamp/actioncable-go/issues). If you're considering
+tracker](https://github.com/basecamp/actioncable-client/issues). If you're considering
 opening an issue or pull request, please open a discussion instead.
 
 Whenever a discussion leads to an actionable and well-understood task, we'll
@@ -46,4 +46,28 @@ something to work on if you'd like to do so.
 
 Hopefully this process makes it easier for everyone to be involved. Thanks for
 helping! ❤️
+
+## Working on the code
+
+There is one client per language, each in its own directory: `go/`,
+`typescript/`, `python/`, `ruby/`, `kotlin/`, `rust/` and `swift/`. They are
+all the Go client in another language, so a change to what a client *does*
+is a change to all seven. [PORTING.md](PORTING.md) is the specification they
+share: the public surface, the defaults, and the tests every one of them owes
+`go/*_test.go`.
+
+Each directory builds and tests on its own, and the root Makefile runs them:
+
+```bash
+make check              # every language, plus the release scripts
+make typescript-check   # just one: go, typescript, python, ruby, kotlin, rust, swift
+```
+
+`make <language>-check` is exactly what CI runs for that language, so a green
+local run is a green CI run. You need that language's toolchain and nothing
+else; Kotlin's JDK is pinned in `kotlin/.mise.toml`.
+
+One version number covers all seven languages, and it is written by
+`make bump VERSION=x.y.z` rather than by hand. [RELEASING.md](RELEASING.md)
+covers the rest.
 

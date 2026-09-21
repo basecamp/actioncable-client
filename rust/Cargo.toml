@@ -1,0 +1,74 @@
+[package]
+name = "actioncable-client"
+version = "2.0.0"
+description = "A client for Rails' Action Cable: one connection, many channel subscriptions, reconnects on its own"
+readme = "README.md"
+homepage = "https://github.com/basecamp/actioncable-client"
+repository = "https://github.com/basecamp/actioncable-client"
+documentation = "https://docs.rs/actioncable-client"
+keywords = ["actioncable", "rails", "websocket", "client", "37signals"]
+categories = ["web-programming::websocket", "api-bindings"]
+include = ["src/**", "README.md", "LICENSE"]
+publish = true
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+
+[lib]
+name = "actioncable"
+path = "src/lib.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["websocket"]
+# The built-in transport, tokio-tungstenite over rustls with the platform's root
+# certificates. Without it the crate is the traits, the protocol and the client core, and
+# the caller brings a transport of their own.
+websocket = ["dep:futures-util", "dep:rustls", "dep:tokio-tungstenite"]
+# `actioncable::test_support`: an in-memory transport a test plays the server on. For this
+# crate's own tests and the tests of whatever is built on it; never for a build that ships.
+test-support = []
+
+[dependencies]
+async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
+getrandom = "0.3"
+http = "1"
+# tokio-tungstenite takes rustls with no crypto provider of its own, and a rustls without
+# one panics on the first handshake. Naming it here picks ring, which builds everywhere
+# this client runs without cmake or a C++ toolchain.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+# Native roots rather than webpki's bundle: the cable connection trusts the certificates
+# the rest of the machine trusts.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-native-roots"], optional = true }
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "allow", priority = -1 }
+cargo = { level = "allow", priority = -1 }
+unwrap_used = "deny"                # a panic is never an answer; the tests and the fakes opt out at file level
+expect_used = "deny"
+# pedantic allowlist — each entry needs a one-line reason
+must_use_candidate = "allow"        # builders return Self; noise
+missing_errors_doc = "allow"        # every fallible call returns Result<_, Error>; Error documents itself
+missing_panics_doc = "allow"        # no public fn panics outside test_support, which says so
+return_self_not_must_use = "allow"  # builders return Self; noise

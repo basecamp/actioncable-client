@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "actioncable-client"
+version = "2.0.0"
+description = "Python client for Rails' Action Cable"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "37signals" }]
+keywords = ["actioncable", "action-cable", "websocket", "rails", "37signals"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/basecamp/actioncable-client"
+Repository = "https://github.com/basecamp/actioncable-client"
+Documentation = "https://github.com/basecamp/actioncable-client/tree/main/python"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/actioncable"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# Every test here drives a client over an event loop, so marking each one
+# would be noise.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.ruff.lint]
+# "S" is flake8-bandit, matching basecamp-sdk/python's only static security
+# linting.
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert freely and pass fake credentials as literals.
+"tests/**" = ["S101", "S105", "S106"]
+# The fake transport is a testing tool, and asserts the way a test does.
+"src/actioncable/testing.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_untyped_defs = true

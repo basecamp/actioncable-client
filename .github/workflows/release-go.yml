@@ -1,0 +1,150 @@
+name: Release Go client
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger is always dry-run (rehearsal mode)
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        # zizmor: ignore[cache-poisoning] -- cached deps are for testing, not release artifact generation
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: 'go/go.sum'
+
+      - name: Verify module path and version
+        if: github.event_name == 'push'
+        working-directory: go
+        run: |
+          if ! grep -q '^module github.com/basecamp/actioncable-client/go$' go.mod; then
+            echo "::error::go/go.mod module path mismatch"
+            exit 1
+          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if ! grep -qxF "const Version = \"${VERSION}\"" version.go; then
+            echo "::error::go/version.go does not match tag v${VERSION}"
+            echo "Expected: const Version = \"${VERSION}\""
+            echo "Found:    $(grep 'const Version =' version.go)"
+            exit 1
+          fi
+
+      - name: Check
+        run: make go-check
+
+  # The dry run is a separate job from the real tag push so that the rehearsal
+  # never holds `contents: write`. Both jobs resolve the same tag; only this one
+  # is allowed to run on workflow_dispatch.
+  tag-dry-run:
+    name: Create Go module tag (dry run)
+    needs: [test]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Report the go/ subdirectory tag that would be pushed
+        run: |
+          # On workflow_dispatch GITHUB_REF is refs/heads/<branch>, so the tag
+          # cannot be derived from it. Read the Go source of truth instead.
+          VERSION=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' go/version.go)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read Version from go/version.go"
+            exit 1
+          fi
+          echo "Rehearsal for version: $VERSION"
+
+          GO_TAG="go/v${VERSION}"
+          REMOTE_SHA=$(git ls-remote --tags --refs origin "$GO_TAG" | awk '{print $1}')
+          if [ -z "$REMOTE_SHA" ]; then
+            echo "Would create $GO_TAG at $GITHUB_SHA and push it."
+          elif [ "$REMOTE_SHA" = "$GITHUB_SHA" ]; then
+            echo "Tag $GO_TAG already exists at $GITHUB_SHA — would do nothing."
+          else
+            echo "Tag $GO_TAG exists at $REMOTE_SHA — would force-move it to $GITHUB_SHA."
+          fi
+
+          echo "::notice::Dry run mode - not actually publishing"
+          echo "Would publish: Go module tag ${GO_TAG} (proxy.golang.org serves github.com/basecamp/actioncable-client/go from it)"
+
+  # The Go module lives in go/, so the proxy serves it from a go/vX.Y.Z tag and
+  # not from the global one. `make release` never creates it: one tag is what a
+  # person pushes, and this is where the second one comes from.
+  tag:
+    name: Create Go module tag
+    needs: [test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # zizmor: ignore[artipacked] -- credentials needed for git push to create module tag
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go/go.mod'
+          cache: false
+
+      - name: Push go/ subdirectory tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          GO_TAG="go/${TAG}"
+
+          REMOTE_SHA=$(git ls-remote --tags --refs origin "$GO_TAG" | awk '{print $1}')
+          if [ -n "$REMOTE_SHA" ]; then
+            if [ "$REMOTE_SHA" = "$GITHUB_SHA" ]; then
+              echo "Tag $GO_TAG already exists at $GITHUB_SHA — nothing to do."
+              exit 0
+            else
+              echo "::error::Tag $GO_TAG exists at $REMOTE_SHA, which is not this commit. A published module tag must not move; release a new version."
+              exit 1
+            fi
+          fi
+
+          git tag "$GO_TAG" "$GITHUB_SHA"
+          git push origin "$GO_TAG"
+
+      - name: Confirm the module proxy resolves the version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          MODULE="github.com/basecamp/actioncable-client/go"
+          for attempt in 1 2 3 4 5 6; do
+            if GOPROXY=https://proxy.golang.org go list -m "${MODULE}@${TAG}"; then
+              exit 0
+            fi
+            echo "The module proxy has not indexed ${TAG} yet (attempt $attempt of 6)"
+            sleep 10
+          done
+          echo "::error::The module proxy could not resolve ${MODULE}@${TAG}"
+          exit 1

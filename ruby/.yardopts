@@ -1,0 +1,6 @@
+--output-dir doc
+--protected
+--no-private
+--embed-mixins
+--title "Action Cable Ruby client"
+lib/**/*.rb

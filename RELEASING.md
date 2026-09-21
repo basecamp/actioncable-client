@@ -1,97 +1,190 @@
-# Releasing actioncable-go
+# Releasing
 
-A Git tag publishes this source-only Go module. The tag is the release artifact. The
-GitHub Release supplies human-readable notes, and the public Go module proxy caches
-the tagged source.
+One version number covers all seven clients, and one tag releases them. The tag
+is `vX.Y.Z`. Pushing it starts the release workflows that are switched on and,
+once they are green, the one that writes the GitHub Release.
 
-Published tags are immutable. Never move or reuse a release tag, even when its
-workflow fails. The Go module proxy and checksum database can keep the first version
-of a tag permanently.
+**For now only Go and Rust release on a tag.** The other five workflows exist,
+adapted from basecamp-sdk, but take only a manual `workflow_dispatch`, which is
+always a dry run, so a tag publishes nothing for TypeScript, Python, Ruby,
+Kotlin or Swift. Each is switched on by restoring its `push: tags: ['v*']`
+trigger and adding it to the wait list in `release-github.yml`, once "Before the
+first release" below is done for its registry. The version still moves for all
+seven on every bump, so the day one is switched on it publishes the version
+everything else is already at.
 
-## Quick release
+Published tags and published packages are immutable. Never move or reuse a
+release tag, even when its workflow fails. The Go module proxy, crates.io and
+RubyGems all keep the first thing they saw, permanently.
 
-Run this from a clean, current `main` checkout:
 
-```bash
-make release VERSION=1.1.0
-```
+## Releasing
 
-The version has no leading `v`. The release command creates `v1.1.0`.
-
-## Release candidate
-
-```bash
-make release VERSION=1.2.0-rc.1
-```
-
-## Dry run
+From a clean, current `main` checkout:
 
 ```bash
-make release VERSION=1.1.0 DRY_RUN=1
+make bump VERSION=2.1.0
+# review the diff, commit it, get it on main
+make release VERSION=2.1.0
 ```
 
-The dry run performs every local check without creating or pushing a tag.
+The version has no leading `v`. `make release` creates `v2.1.0`.
 
-## Local release process
+`make bump` writes the version to the ten files that hold it and refreshes the
+four lockfiles that record it. `make release` reads every one of them back and
+refuses to tag if any disagrees, so a language left behind by the bump stops the
+release instead of publishing a package whose own version constant lies.
 
-`scripts/release.sh`:
-
-1. Validates the semantic version.
-2. Requires the repository's default branch and a clean working tree.
-3. Fetches the default branch and tags from `origin`.
-4. Requires local `HEAD` to equal `origin/main`.
-5. Refuses `go.mod` replacement directives.
-6. Refuses an existing tag and a stable version older than the latest stable release.
-7. Runs `make release-check`.
-8. Creates an annotated tag at the tested commit.
-9. Atomically pushes `main` and the tag, so a concurrent change rejects the complete push.
-
-The tag push starts the [release workflow](.github/workflows/release.yml).
-
-## GitHub release workflow
-
-The workflow runs against the exact tag commit. It:
-
-1. Validates the tag and requires an annotated semantic-version tag.
-2. Verifies that the tag commit is on `main`.
-3. Runs `make release-check` again.
-4. Creates the GitHub Release with generated notes, marking a suffixed version as a prerelease.
-5. Requests the version from `proxy.golang.org` and fails if the proxy cannot resolve it.
-
-There are no binary archives, package-manager updates, signing keys, or release assets.
-Consumers download the source through Go tooling:
+A release candidate is the same command with a suffixed version:
 
 ```bash
-go get github.com/basecamp/actioncable-go@v1.1.0
+make release VERSION=2.2.0-rc.1
 ```
+
+It publishes as a prerelease everywhere that has the idea: npm under the `next`
+tag, GitHub as a prerelease.
+
+A dry run performs every local check without creating or pushing a tag:
+
+```bash
+make release VERSION=2.1.0 DRY_RUN=1
+```
+
+
+## What `scripts/release.sh` checks
+
+1. The version is valid SemVer.
+2. The checkout is on the default branch with a clean working tree.
+3. Local `HEAD` equals `origin/main`, after fetching branch and tags.
+4. `go/go.mod` has no replace directives.
+5. Every version constant and every lockfile reads `VERSION`.
+6. The tag does not already exist, and a stable version is not older than the
+   latest stable release.
+7. `make release-check` — which is `make check`, every language — passes.
+8. The annotated tag is created at the tested commit.
+9. `main` and the tag are pushed atomically, so a concurrent change rejects the
+   whole push and publishes nothing.
+
+
+## What each workflow publishes
+
+Every one of them re-runs that language's `make <language>-check` against the
+tagged commit, verifies the tag is an ancestor of `main`, and verifies the
+language's own version constant equals the tag before it publishes anything.
+
+| Workflow                   | Publishes                               | Where                            | On a tag |
+|----------------------------|-----------------------------------------|----------------------------------|----------|
+| `release-go.yml`           | the `go/vX.Y.Z` tag                     | proxy.golang.org                 | yes      |
+| `release-rust.yml`         | `actioncable-client`                    | crates.io                        | yes      |
+| `release-github.yml`       | the GitHub Release and its notes        | this repository                  | yes      |
+| `release-typescript.yml`   | `@37signals/actioncable`                | npm                              | not yet  |
+| `release-python.yml`       | `actioncable-client`                    | PyPI                             | not yet  |
+| `release-ruby.yml`         | `actioncable-client`                    | RubyGems                         | not yet  |
+| `release-kotlin.yml`       | `com.basecamp:actioncable-client`       | GitHub Packages                  | not yet  |
+| `release-swift.yml`        | nothing — the `vX.Y.Z` tag is the release | resolved by SwiftPM from this repository | not yet |
+
+Two of those need explaining.
+
+**Go.** The module lives in `go/`, so the proxy serves it from a `go/vX.Y.Z`
+tag, not from the global one. `scripts/release.sh` never creates it:
+`release-go.yml` does, from the tag that triggered it, after the tests pass.
+That is why a person pushes one tag and two exist afterwards.
+
+**Swift.** SwiftPM resolves a package from the root of a repository and cannot
+be pointed at a subdirectory, so the root `Package.swift` — not
+`swift/Package.swift` — is what consumers build. Nothing is uploaded anywhere;
+the tag is the release. `test.yml` and `release-swift.yml` both build the root
+manifest so it cannot quietly stop naming a real source path.
+
+`release-github.yml` polls the switched-on workflows for the tag's own
+push-triggered runs and only writes the Release when all of them succeeded. A
+release whose notes advertise a package should not exist before the registry
+has it, which is also why a workflow joins its wait list only when it starts
+publishing.
+
+
+## The rehearsal
+
+Every release workflow also takes a `workflow_dispatch`, and a manual run is
+always a dry run. It builds the artifact the real run would build, validates it
+the way the registry will, and reports what it would have published — without
+holding any publishing credential, because the dry-run job carries no
+`environment:` and no write permission.
+
+Run one from the Actions tab against `main` before the first release, and after
+any change to the pipeline. `release-github.yml`'s manual run takes a tag and
+creates a *draft* release, so it can be rehearsed too.
+
 
 ## Verification
 
-After the workflow is green, verify:
+After the workflows are green:
 
 ```bash
-gh release view v1.1.0
-GOPROXY=https://proxy.golang.org go list -m github.com/basecamp/actioncable-go@v1.1.0
+gh release view v2.1.0
+GOPROXY=https://proxy.golang.org go list -m github.com/basecamp/actioncable-client/go@v2.1.0
+npm view @37signals/actioncable@2.1.0 version
+pip index versions actioncable-client
+gem list -r -a actioncable-client
+cargo search actioncable-client
 ```
 
-The documentation will appear at:
+Documentation appears at `pkg.go.dev/github.com/basecamp/actioncable-client/go@v2.1.0`
+and `docs.rs/actioncable-client/2.1.0`; both can take a while to index.
 
-```text
-https://pkg.go.dev/github.com/basecamp/actioncable-go@v1.1.0
-```
-
-`pkg.go.dev` can take additional time to index a new version.
 
 ## Recovery
 
-If the atomic tag push fails, no release was published. Pull the current `main` and
-run the release command again.
+**The atomic tag push failed.** Nothing was published. Pull `main` and run the
+release command again.
 
-If the tag workflow fails before it creates the GitHub Release:
+**A publish workflow failed before it published.** For a transient failure, re-run
+the job: every publish step checks the registry first and treats an already-published
+version as success, so a re-run cannot double-publish. For a defect in the source
+or the pipeline, merge the fix and release a new version. Do not move the tag.
 
-- For a temporary infrastructure failure, rerun the existing workflow for that tag.
-- For a source or release-process defect, merge the fix and use a new version. Do not
-  move or reuse the published tag.
+**One language published and another did not.** The versions are allowed to be
+uneven for as long as it takes to re-run the failed job. If the failure needs a
+source change, release the next patch everywhere rather than trying to catch one
+language up: one version across seven languages is the contract, and a language
+sitting a patch behind is easier to explain than two languages at the same
+version built from different commits.
 
-If the GitHub Release exists but the proxy check failed, rerun the failed release job.
-The job detects the existing GitHub Release and continues with the proxy check.
+**The GitHub Release is missing but everything published.** Run
+`release-github.yml` manually with the tag. It creates a draft; publish it by
+hand.
+
+
+## Before the first release
+
+Items 1, 5 and 8 gate the first release as it stands, with Go and Rust
+publishing. The rest each gate switching one more language on: do the item,
+rehearse its workflow by hand, then restore its push trigger and add it to the
+wait list.
+
+1. **Rename the repository to `actioncable-client`.** Every package manifest,
+   workflow and README already says that name. The `github.repository` guard in
+   `release-rust.yml` checks it literally.
+2. **npm.** Register a trusted publisher for `@37signals/actioncable` pointing
+   at `basecamp/actioncable-client` and `release-typescript.yml`, and create a
+   `release-npm` environment restricted to `v*` tags. The package scope must
+   allow public publishing.
+3. **PyPI.** Register a trusted publisher for `actioncable-client` pointing at
+   `release-python.yml`, and create a `release-pypi` environment. The project
+   name has to be claimed before the publisher can be attached to it.
+4. **RubyGems.** Register a trusted publisher for the `actioncable-client` gem
+   pointing at `release-ruby.yml`, and create a `release-rubygems` environment.
+5. **crates.io.** Trusted publishing cannot create a crate, so publish
+   `actioncable-client` once by hand from a local checkout (`cargo publish`),
+   then register the trusted publisher for `release-rust.yml` and create a
+   `release-crates` environment restricted to `v*` tags with required reviewers.
+   Until the crate exists, `release-rust.yml` fails deliberately rather than
+   letting the GitHub Release advertise a version nobody can install.
+6. **GitHub Packages** needs nothing: `release-kotlin.yml` publishes with the
+   workflow's own `GITHUB_TOKEN` and `packages: write`.
+7. **Go and Swift** need nothing. Both are served from tags on this repository.
+8. **Branch protection** on `main`, because every release workflow refuses a tag
+   that is not an ancestor of it.
+
+Rehearse each workflow with `workflow_dispatch` once its credentials are in
+place, and only then push the first tag.
