@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+validate="$(dirname "$0")/validate-version.sh"
+
 valid=(
   0.0.0
   1.1.0
@@ -30,14 +32,14 @@ invalid=(
 )
 
 for version in "${valid[@]}"; do
-  if ! scripts/validate-version.sh "$version"; then
+  if ! "$validate" "$version"; then
     echo "expected valid version: $version" >&2
     exit 1
   fi
 done
 
 for version in "${invalid[@]}"; do
-  if scripts/validate-version.sh "$version" >/dev/null 2>&1; then
+  if "$validate" "$version" >/dev/null 2>&1; then
     echo "expected invalid version: $version" >&2
     exit 1
   fi

@@ -1,0 +1,17 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{kt,kts}]
+indent_style = space
+indent_size = 4
+max_line_length = 140
+ktlint_code_style = intellij_idea
+# The client's own names are HEY's and Rails': `V1Json`, `onConnected`. ktlint's
+# naming rules read a test function named in prose as a violation, and the
+# backtick-quoted names the tests use are the point.
+ktlint_function_naming_ignore_when_annotated_with = Test

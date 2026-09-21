@@ -1,0 +1,204 @@
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v2.1.0). Required for manual runs.'
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  wait-for-publishes:
+    name: Wait for the language publishes
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for every language's release workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          WORKFLOWS=("release-go.yml" "release-typescript.yml" "release-python.yml" "release-ruby.yml" "release-kotlin.yml" "release-rust.yml" "release-swift.yml")
+          TAG="${GITHUB_REF#refs/tags/}"
+          MAX_WAIT=1800  # 30 minutes
+          POLL=30
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            ALL_DONE=true
+            ANY_FAILED=false
+            STATUS_LINE=""
+
+            for WF in "${WORKFLOWS[@]}"; do
+              # --event push: a workflow_dispatch rehearsal on the same tag is a
+              # dry run whose publish job was skipped, and it must not stand in
+              # for the tag-triggered publish.
+              RUN_JSON=$(gh run list \
+                --repo "$GITHUB_REPOSITORY" \
+                --workflow "$WF" \
+                --branch "$TAG" \
+                --event push \
+                --limit 5 \
+                --json conclusion,headSha \
+                --jq "[.[] | select(.headSha == \"$GITHUB_SHA\")] | .[0] // empty")
+
+              if [ -z "$RUN_JSON" ]; then
+                ALL_DONE=false
+                STATUS_LINE+="  waiting  $WF: no run for this commit yet"$'\n'
+                continue
+              fi
+
+              CONCLUSION=$(echo "$RUN_JSON" | jq -r '.conclusion // empty')
+
+              if [ -z "$CONCLUSION" ]; then
+                ALL_DONE=false
+                STATUS_LINE+="  running  $WF"$'\n'
+              elif [ "$CONCLUSION" = "success" ]; then
+                STATUS_LINE+="  ok       $WF"$'\n'
+              else
+                ANY_FAILED=true
+                STATUS_LINE+="  FAILED   $WF: $CONCLUSION"$'\n'
+              fi
+            done
+
+            echo "$STATUS_LINE"
+
+            if $ANY_FAILED; then
+              echo "::error::One or more release workflows failed"
+              exit 1
+            fi
+
+            if $ALL_DONE; then
+              echo "Every release workflow completed successfully"
+              exit 0
+            fi
+
+            echo "Waiting ${POLL}s for the rest... (${ELAPSED}s elapsed)"
+            sleep $POLL
+            ELAPSED=$((ELAPSED + POLL))
+          done
+
+          echo "::error::Timed out waiting for the release workflows after ${MAX_WAIT}s"
+          echo "Final status:"
+          echo "$STATUS_LINE"
+          exit 1
+
+  release:
+    name: Create release
+    needs: [wait-for-publishes]
+    if: always() && (needs.wait-for-publishes.result == 'success' || needs.wait-for-publishes.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="$INPUT_TAG"
+            if [ -z "$TAG" ]; then
+              echo "::error::tag input is required for manual runs"
+              exit 1
+            fi
+            if [[ "$TAG" != v* ]]; then
+              echo "::error::tag must start with 'v' (e.g. v2.1.0), got: $TAG"
+              exit 1
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "semver=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      - name: Verify tag is on main
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git fetch origin main
+          TAG_SHA=$(git rev-parse "refs/tags/${TAG}^{commit}" 2>/dev/null || git rev-parse "refs/tags/${TAG}^{}" 2>/dev/null)
+          git merge-base --is-ancestor "$TAG_SHA" origin/main
+
+      - name: Checkout tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: git checkout "refs/tags/$TAG"
+
+      - name: Build installation body
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          SEMVER: ${{ steps.tag.outputs.semver }}
+        run: |
+          {
+            echo "One Action Cable client per language, all at the same version."
+            echo ""
+            echo "## Installation"
+            echo ""
+            echo "**Go**"
+            echo '```'
+            echo "go get github.com/basecamp/actioncable-client/go@${TAG}"
+            echo '```'
+            echo ""
+            echo "**TypeScript**"
+            echo '```'
+            echo "npm install @37signals/actioncable@${SEMVER}"
+            echo '```'
+            echo ""
+            echo "**Python**"
+            echo '```'
+            echo "pip install actioncable-client==${SEMVER}"
+            echo '```'
+            echo ""
+            echo "**Ruby**"
+            echo '```'
+            echo "bundle add actioncable-client --version ${SEMVER}"
+            echo '```'
+            echo ""
+            echo "**Kotlin**"
+            echo '```kotlin'
+            echo "implementation(\"com.basecamp:actioncable-client:${SEMVER}\")"
+            echo '```'
+            echo "Requires the GitHub Packages repository and a token — see [Kotlin installation](https://github.com/basecamp/actioncable-client/blob/${TAG}/kotlin/README.md#installation)."
+            echo ""
+            echo "**Rust**"
+            echo '```'
+            echo "cargo add actioncable-client@${SEMVER}"
+            echo '```'
+            echo ""
+            echo "**Swift**"
+            echo '```swift'
+            echo ".package(url: \"https://github.com/basecamp/actioncable-client\", from: \"${SEMVER}\")"
+            echo '```'
+          } > body.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        # zizmor: ignore[superfluous-actions] -- `gh release create` would do this too; carried from basecamp-sdk, consider removal
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Action Cable client ${{ steps.tag.outputs.tag }}
+          body_path: body.md
+          generate_release_notes: true
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

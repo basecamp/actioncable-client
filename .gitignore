@@ -1,9 +1,11 @@
-# Test and coverage output
+# Each language directory ignores its own build output. These are the root's.
+
+# Go test and coverage output
 *.out
 *.test
 
-# Build output
-/dist/
+# SwiftPM's output for the root distribution manifest
+/.build/
 
 # Editor and OS noise
 .DS_Store

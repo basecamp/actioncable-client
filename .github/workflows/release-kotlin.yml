@@ -1,0 +1,158 @@
+name: Release Kotlin client
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger is always dry-run (rehearsal mode)
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        # zizmor: ignore[cache-poisoning] -- cached deps are for testing, not release artifact generation
+        with:
+          cache-provider: basic
+          build-root-directory: kotlin
+
+      - name: Check
+        run: make kotlin-check
+
+  # Gradle's publish task builds from the project rather than from a prepared
+  # file, so the rehearsal cannot hand an artifact to the publisher the way the
+  # gem, wheel and npm tarball do. It gets its own job instead, so the dry run
+  # never holds `packages: write`.
+  publish-dry-run:
+    name: Publish to GitHub Packages (dry run)
+    needs: [test]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        # zizmor: ignore[cache-poisoning] -- cache is branch-isolated; fork PRs cannot write to this cache
+        with:
+          cache-provider: basic
+          build-root-directory: kotlin
+
+      # Read through Gradle rather than off the file: the version lives inside
+      # `allprojects { }`, so it is indented, and a grep anchored to the margin
+      # would silently find nothing.
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(./gradlew --quiet :actioncable-client:properties | sed -n 's/^version: //p')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read the project version from Gradle"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Rehearsal for version: $VERSION"
+
+      - name: Dry-run build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./gradlew :actioncable-client:publishToMavenLocal
+          echo "::notice::Dry run mode - not actually publishing"
+          echo "Would publish: com.basecamp:actioncable-client:${VERSION} to GitHub Packages"
+
+  publish:
+    name: Publish to GitHub Packages
+    needs: [test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag is on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        # zizmor: ignore[cache-poisoning] -- cache is branch-isolated; fork PRs cannot write to this cache
+        with:
+          cache-provider: basic
+          build-root-directory: kotlin
+
+      - name: Verify version matches tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          GRADLE_VERSION=$(./gradlew --quiet :actioncable-client:properties | sed -n 's/^version: //p')
+          if [ "$GRADLE_VERSION" != "$VERSION" ]; then
+            echo "::error::Gradle version ($GRADLE_VERSION) does not match tag version ($VERSION)"
+            exit 1
+          fi
+          echo "Releasing version: $VERSION"
+
+      - name: Publish to GitHub Packages
+        shell: bash
+        env:
+          GITHUB_USER: x-access-token
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          output=$(./gradlew :actioncable-client:publish 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "Publish succeeded."
+          elif echo "$output" | grep -q "status code 409"; then
+            echo "Version already published — treating as success for idempotency."
+          else
+            exit "$status"
+          fi

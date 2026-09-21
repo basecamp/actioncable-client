@@ -1,0 +1,23 @@
+// Typecheck-only project covering the tests alongside src/. `npm run typecheck`
+// runs it after the build project.
+//
+// tsconfig.json is the *build* project: it emits declarations under
+// rootDir: "src", so tests cannot join it without landing in dist/. This
+// project turns emit off, widens rootDir to the package, and resets `exclude`,
+// since an inherited "tests" entry drops every test file from the program even
+// when `include` names them.
+//
+// noUncheckedIndexedAccess is deliberately off here. It stays on for the
+// shipped surface; in test code it only buys `frames[0]!` ceremony, since an
+// undefined index fails the assertion on the next line anyway.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "noUncheckedIndexedAccess": false,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

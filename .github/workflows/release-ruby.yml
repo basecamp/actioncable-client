@@ -1,0 +1,181 @@
+name: Release Ruby client
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger is always dry-run (rehearsal mode)
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        # zizmor: ignore[cache-poisoning] -- cached deps are for testing, not release artifact generation
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ruby
+
+      - name: Check
+        run: make ruby-check
+
+  # Building is deliberately separate from publishing: this job carries no
+  # `environment:`, so a workflow_dispatch rehearsal runs it from any ref
+  # without needing the release-rubygems deployment approval, and it holds no
+  # publishing credentials. The publish job below pushes the exact .gem built
+  # here rather than rebuilding.
+  build:
+    name: Build gem
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        working-directory: ruby
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        # zizmor: ignore[cache-poisoning] -- cache is branch-isolated; fork PRs cannot write to this cache
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ruby
+
+      - name: Extract version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          GEM_VERSION=$(ruby -e "require_relative 'lib/actioncable_client/version'; puts ActionCableClient::VERSION")
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "version=$GEM_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Rehearsal for version: $GEM_VERSION"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            if [ "$GEM_VERSION" != "$VERSION" ]; then
+              echo "::error::Gem version ($GEM_VERSION) does not match tag version ($VERSION)"
+              exit 1
+            fi
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "Releasing version: $VERSION"
+          fi
+
+      - name: Build gem
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gem build actioncable-client.gemspec
+          ls -l "actioncable-client-${VERSION}.gem"
+
+      # `gem push` has no dry run, so verify the built artifact instead. The
+      # gemspec globs its file list off the working tree, so a checkout that
+      # went wrong would yield a well-formed gem with no library in it — which
+      # RubyGems accepts and users cannot require.
+      - name: Verify packaged gem
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ruby -e '
+            require "rubygems/package"
+            spec = Gem::Package.new(ARGV[0]).spec
+            abort "::error::Packaged name is #{spec.name}, expected actioncable-client" unless spec.name == "actioncable-client"
+            abort "::error::Packaged version is #{spec.version}, expected #{ARGV[1]}" unless spec.version.to_s == ARGV[1]
+            lib = spec.files.grep(%r{\Alib/})
+            abort "::error::Packaged gem contains no lib/ files" if lib.empty?
+            abort "::error::Packaged gem is missing lib/actioncable_client.rb" unless lib.include?("lib/actioncable_client.rb")
+            abort "::error::Packaged gem has runtime dependencies: #{spec.runtime_dependencies.map(&:name).join(", ")}" unless spec.runtime_dependencies.empty?
+            puts "Packaged #{spec.full_name}: #{spec.files.size} files, #{lib.size} under lib/"
+          ' "actioncable-client-${VERSION}.gem" "$VERSION"
+
+      - name: Dry-run report
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "::notice::Dry run mode - not actually publishing"
+          echo "Would publish: actioncable-client-${VERSION}.gem to RubyGems"
+
+      - name: Upload gem
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rubygem
+          path: ruby/actioncable-client-*.gem
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to RubyGems
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: release-rubygems
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: ruby
+    steps:
+      - name: Download gem
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rubygem
+          path: ruby/
+
+      # No checkout: this job pushes the gem the build job produced, so it needs
+      # Ruby but not the repository. bundler-cache is therefore not used either.
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+
+      - name: Configure RubyGems credentials
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+
+      - name: Publish to RubyGems
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set +e
+          output=$(gem push "actioncable-client-${VERSION}.gem" 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "Publish succeeded."
+          elif echo "$output" | grep -qi "repushing of gem versions is not allowed\|already been pushed"; then
+            echo "Version already published — treating as success for idempotency."
+          else
+            exit "$status"
+          fi
+          gem exec rubygems-await "actioncable-client-${VERSION}.gem"

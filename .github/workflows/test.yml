@@ -1,0 +1,202 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+# One job per language, and every one of them runs the same gate a developer
+# runs: `make <language>-check`. What CI checks and what the language directory
+# checks cannot drift, because they are the same target.
+jobs:
+  lint-actions:
+    name: GitHub Actions audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          advanced-security: false
+
+  test-go:
+    name: Go
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: 'go/go.sum'
+
+      - name: Check
+        run: make go-check
+
+  test-typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: typescript/package-lock.json
+
+      - name: Check
+        run: make typescript-check
+
+  test-python:
+    name: Python
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Check
+        run: make python-check
+
+  test-ruby:
+    name: Ruby
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ruby
+
+      - name: Check
+        run: make ruby-check
+
+  test-kotlin:
+    name: Kotlin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The JDK kotlin/.mise.toml pins, so a local run and CI compile against
+      # the same one.
+      - name: Set up Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+          build-root-directory: kotlin
+
+      - name: Check
+        run: make kotlin-check
+
+  test-rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: '1.98.1'
+          components: clippy, rustfmt
+
+      # The crate declares rust-version = "1.88", and nothing else here builds
+      # on it: rust/rust-toolchain.toml pins the dev toolchain, and a toolchain
+      # file outranks the default this action sets. RUSTUP_TOOLCHAIN on the
+      # MSRV step below outranks the file in turn.
+      - name: Set up the MSRV toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: '1.88'
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: rust
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Check
+        run: make rust-check
+
+      - name: Build and test the library on the MSRV (locked)
+        working-directory: rust
+        env:
+          RUSTUP_TOOLCHAIN: '1.88'
+        run: |
+          cargo build --all-features --locked
+          cargo build --no-default-features --locked
+          cargo test --all-features --locked
+
+  test-swift:
+    name: Swift
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check
+        run: make swift-check
+
+      # The root Package.swift is what SPM consumers resolve; swift/Package.swift
+      # is what `make swift-check` builds. Nothing else would notice the day the
+      # distribution manifest stopped naming a real source path.
+      - name: Build the distribution manifest
+        run: swift build --package-path .

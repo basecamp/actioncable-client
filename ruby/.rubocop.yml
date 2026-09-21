@@ -1,0 +1,17 @@
+# 37signals house style
+inherit_gem:
+  rubocop-37signals: rubocop.yml
+
+AllCops:
+  TargetRubyVersion: 3.2
+  SuggestExtensions: false
+  Exclude:
+    - "vendor/**/*"
+    - "doc/**/*"
+
+# assert_not and its family are ActiveSupport's, and this gem has no Rails.
+Rails/AssertNot:
+  Enabled: false
+
+Rails/RefuteMethods:
+  Enabled: false
