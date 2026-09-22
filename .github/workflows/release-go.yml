@@ -41,7 +41,7 @@ jobs:
         if: github.event_name == 'push'
         working-directory: go
         run: |
-          if ! grep -q '^module github.com/basecamp/actioncable-client/go$' go.mod; then
+          if ! grep -q '^module github.com/basecamp/actioncable-client/go/v2$' go.mod; then
             echo "::error::go/go.mod module path mismatch"
             exit 1
           fi
@@ -93,7 +93,7 @@ jobs:
           fi
 
           echo "::notice::Dry run mode - not actually publishing"
-          echo "Would publish: Go module tag ${GO_TAG} (proxy.golang.org serves github.com/basecamp/actioncable-client/go from it)"
+          echo "Would publish: Go module tag ${GO_TAG} (proxy.golang.org serves github.com/basecamp/actioncable-client/go/v2 from it)"
 
   # The Go module lives in go/, so the proxy serves it from a go/vX.Y.Z tag and
   # not from the global one. `make release` never creates it: one tag is what a
@@ -138,7 +138,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          MODULE="github.com/basecamp/actioncable-client/go"
+          MODULE="github.com/basecamp/actioncable-client/go/v2"
           for attempt in 1 2 3 4 5 6; do
             if GOPROXY=https://proxy.golang.org go list -m "${MODULE}@${TAG}"; then
               exit 0

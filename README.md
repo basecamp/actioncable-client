@@ -22,7 +22,7 @@ client runs in a test with no network at all.
 
 | Language                        | Package                                       | Install                                                        |
 |---------------------------------|-----------------------------------------------|----------------------------------------------------------------|
-| [Go](go/README.md)              | `github.com/basecamp/actioncable-client/go`   | `go get github.com/basecamp/actioncable-client/go`             |
+| [Go](go/README.md)              | `github.com/basecamp/actioncable-client/go/v2` | `go get github.com/basecamp/actioncable-client/go/v2`         |
 | [TypeScript](typescript/README.md) | `@37signals/actioncable`                   | `npm install @37signals/actioncable`                           |
 | [Python](python/README.md)      | `actioncable-client`, import `actioncable`    | `pip install actioncable-client`                               |
 | [Ruby](ruby/README.md)          | `actioncable-client`, require `actioncable_client` | `bundle add actioncable-client`                           |
