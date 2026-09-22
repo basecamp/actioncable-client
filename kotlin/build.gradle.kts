@@ -6,7 +6,7 @@ plugins {
 
 allprojects {
     group = "com.basecamp"
-    version = "2.0.0"
+    version = "2.0.1"
 }
 
 // Pin javac's source encoding for every module, the way basecamp-sdk/kotlin does.
