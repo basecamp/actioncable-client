@@ -60,7 +60,11 @@ make release VERSION=2.1.0 DRY_RUN=1
 5. Every version constant and every lockfile reads `VERSION`.
 6. The tag does not already exist, and a stable version is not older than the
    latest stable release.
-7. `make release-check` — which is `make check`, every language — passes.
+7. CI's `Test` workflow passed for this exact commit on `main`. The script runs
+   no checks of its own: seven languages need seven toolchains and the Swift
+   job runs on macOS, so no one machine can reproduce the gate, and the commit
+   already passed it when it landed. `make release-check` is still there for a
+   local run of every language you have a toolchain for.
 8. The annotated tag is created at the tested commit.
 9. `main` and the tag are pushed atomically, so a concurrent change rejects the
    whole push and publishes nothing.

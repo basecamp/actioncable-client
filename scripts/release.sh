@@ -175,16 +175,30 @@ if [[ "$PRERELEASE" -eq 0 ]]; then
   fi
 fi
 
-info "Running release checks"
+info "Checking CI"
 echo "  Branch: $BRANCH"
 echo "  Commit: ${LOCAL:0:7}"
 echo "  Tag:    $TAG"
 echo
-make release-check
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  die "Release checks changed the working tree. Restore or commit those changes first."
-fi
+# The gate is CI's Test workflow on this exact commit, not a local run. Seven
+# languages need seven toolchains, and the Swift job runs on macOS, so no one
+# machine can reproduce the gate — and it already ran when the commit landed
+# on the default branch. `make release-check` is still there for a local run.
+command -v gh >/dev/null 2>&1 || die "gh is required to read the commit's CI result"
+CI_CONCLUSION=$(gh run list --workflow test.yml --commit "$LOCAL" --event push \
+  --json status,conclusion --jq '[.[] | select(.status == "completed")] | .[0].conclusion // empty' 2>/dev/null || true)
+case "$CI_CONCLUSION" in
+  success)
+    info "CI passed for ${LOCAL:0:7}"
+    ;;
+  "")
+    die "No completed Test run for ${LOCAL:0:7} on $DEFAULT_BRANCH yet. Wait for it, then run the release again."
+    ;;
+  *)
+    die "CI's Test run for ${LOCAL:0:7} concluded '$CI_CONCLUSION'. Fix $DEFAULT_BRANCH before releasing."
+    ;;
+esac
 
 if [[ "$RELEASE_DRY_RUN" -eq 1 ]]; then
   echo
