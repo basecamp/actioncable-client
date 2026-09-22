@@ -10,3 +10,6 @@
 # Editor and OS noise
 .DS_Store
 *.swp
+
+# Worktrees
+.claude/worktrees
