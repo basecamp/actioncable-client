@@ -242,6 +242,10 @@ final class URLSessionTransportTests: XCTestCase {
         let connection = try await dial(server)
         let peer = try await server.accept()
 
+        // Closed the way a client closes: with a read pending, since a live
+        // connection always has one. Apple's URLSession writes a cancel's
+        // close frame through the read it interrupts.
+        let reading = Task { try await connection.read() }
         let closer = try XCTUnwrap(connection as? StatusClosing, "the built-in connection should be a StatusClosing")
         await closer.close(code: 1008, reason: "done here")
 
@@ -249,6 +253,7 @@ final class URLSessionTransportTests: XCTestCase {
         XCTAssertEqual(frame.opcode, opClose)
         XCTAssertEqual(closeCode(of: frame), 1008)
         XCTAssertEqual(String(decoding: frame.payload.dropFirst(2), as: UTF8.self), "done here")
+        _ = try? await reading.value
     }
 
     func testWebSocketTransportTruncatesACloseReasonToFitTheFrame() async throws {
@@ -256,12 +261,14 @@ final class URLSessionTransportTests: XCTestCase {
         let connection = try await dial(server)
         let peer = try await server.accept()
 
+        let reading = Task { try await connection.read() }
         let closer = try XCTUnwrap(connection as? StatusClosing)
         await closer.close(code: 1008, reason: String(repeating: "r", count: 200))
 
         let frame = try await peer.readFrame()
         XCTAssertEqual(frame.opcode, opClose)
         XCTAssertEqual(frame.payload.count, 125, "a control frame's payload is at most 125 bytes")
+        _ = try? await reading.value
     }
 
     func testWebSocketTransportRefusesANonUpgradeResponse() async throws {
