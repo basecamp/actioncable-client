@@ -53,9 +53,8 @@ make ruby-check         # just one: go, typescript, python, ruby, kotlin, rust, 
 
 Where to look next:
 
-- [PORTING.md](PORTING.md) — what a port is, and the behavior every one of them
-  owes the Go client. Read it before writing a new one or changing what the
-  clients do.
+- [go/README.md](go/README.md) — the Go client is the one the others are
+  modeled on; its README is the fullest account of how any of them behaves.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — discussions come before issues and pull
   requests.
 - [RELEASING.md](RELEASING.md) — one version, one tag, seven registries.
