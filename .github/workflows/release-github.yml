@@ -158,7 +158,7 @@ jobs:
             echo ""
             echo "**Go**"
             echo '```'
-            echo "go get github.com/basecamp/actioncable-client/go@${TAG}"
+            echo "go get github.com/basecamp/actioncable-client/go/v2@${TAG}"
             echo '```'
             echo ""
             echo "**TypeScript**"

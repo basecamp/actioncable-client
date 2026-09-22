@@ -1,4 +1,4 @@
-module github.com/basecamp/actioncable-client/go
+module github.com/basecamp/actioncable-client/go/v2
 
 go 1.24
 

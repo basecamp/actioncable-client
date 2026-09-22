@@ -1,6 +1,6 @@
 [package]
 name = "actioncable-client"
-version = "2.0.1"
+version = "2.0.2"
 description = "A client for Rails' Action Cable: one connection, many channel subscriptions, reconnects on its own"
 readme = "README.md"
 homepage = "https://github.com/basecamp/actioncable-client"

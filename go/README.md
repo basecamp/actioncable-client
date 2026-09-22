@@ -7,8 +7,11 @@ repository](../README.md) was ported from.
 ## Installation
 
 ```bash
-go get github.com/basecamp/actioncable-client/go
+go get github.com/basecamp/actioncable-client/go/v2
 ```
+
+The `/v2` is Go's rule for a module at major version 2 or later, not a
+subdirectory: the code is in `go/`, and the import path is the module path.
 
 
 ## Getting started

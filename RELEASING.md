@@ -126,14 +126,14 @@ After the workflows are green:
 
 ```bash
 gh release view v2.1.0
-GOPROXY=https://proxy.golang.org go list -m github.com/basecamp/actioncable-client/go@v2.1.0
+GOPROXY=https://proxy.golang.org go list -m github.com/basecamp/actioncable-client/go/v2@v2.1.0
 npm view @37signals/actioncable@2.1.0 version
 pip index versions actioncable-client
 gem list -r -a actioncable-client
 cargo search actioncable-client
 ```
 
-Documentation appears at `pkg.go.dev/github.com/basecamp/actioncable-client/go@v2.1.0`
+Documentation appears at `pkg.go.dev/github.com/basecamp/actioncable-client/go/v2@v2.1.0`
 and `docs.rs/actioncable-client/2.1.0`; both can take a while to index.
 
 

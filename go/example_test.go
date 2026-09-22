@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/basecamp/actioncable-client/go"
+	"github.com/basecamp/actioncable-client/go/v2"
 )
 
 func Example() {
