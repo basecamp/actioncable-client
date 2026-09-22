@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "actioncable-client"
-version = "2.0.0"
+version = "2.0.1"
 description = "Python client for Rails' Action Cable"
 readme = "README.md"
 requires-python = ">=3.11"
