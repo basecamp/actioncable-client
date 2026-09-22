@@ -418,6 +418,14 @@ the Go transport reports:
 - *Headers nothing asked for.* `URLSession` adds `Accept`, `Accept-Encoding`,
   `Accept-Language` and `Connection` of its own. The session is ephemeral with
   cookie handling off, so nothing ambient beyond those goes out.
+- *The close frame a `close(code:reason:)` should send.* Go writes one and the
+  peer reads it. On Apple platforms `cancel(with:reason:)` is the only way to
+  hang up, and on the macOS runner the peer sees the socket close without a
+  close frame arriving first — whether or not a receive is pending, and however
+  the session is let go. The connection still ends, which is what the client
+  needs; what the peer is told about why is `URLSession`'s. The two tests that
+  read the frame off the peer are skipped on Apple platforms and run on Linux,
+  where swift-corelibs-foundation does write it.
 
 **On Linux, swift-corelibs-foundation does less again.** These five differences
 are what the test suite skips there, and every one of them is exercised on

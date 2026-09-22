@@ -29,6 +29,17 @@ final class URLSessionTransportTests: XCTestCase {
         #endif
     }
 
+    /// The half of a close the peer sees. On Apple platforms a
+    /// `cancel(with:reason:)` ends the connection without the loopback peer
+    /// ever reading a close frame — with or without a receive pending, and
+    /// whether the session is invalidated at once or from the delegate — so
+    /// what the frame carried cannot be asserted there. The README says so.
+    private func skipWhereFoundationSendsNoCloseFrame() throws {
+        #if canImport(Darwin)
+        throw XCTSkip("Apple's URLSession closes the socket without a close frame the peer can read")
+        #endif
+    }
+
     private func dial(
         _ server: LoopbackServer,
         subprotocols: [String] = [],
@@ -245,6 +256,8 @@ final class URLSessionTransportTests: XCTestCase {
         let closer = try XCTUnwrap(connection as? StatusClosing, "the built-in connection should be a StatusClosing")
         await closer.close(code: 1008, reason: "done here")
 
+        try skipWhereFoundationSendsNoCloseFrame()
+
         let frame = try await peer.readFrame()
         XCTAssertEqual(frame.opcode, opClose)
         XCTAssertEqual(closeCode(of: frame), 1008)
@@ -258,6 +271,8 @@ final class URLSessionTransportTests: XCTestCase {
 
         let closer = try XCTUnwrap(connection as? StatusClosing)
         await closer.close(code: 1008, reason: String(repeating: "r", count: 200))
+
+        try skipWhereFoundationSendsNoCloseFrame()
 
         let frame = try await peer.readFrame()
         XCTAssertEqual(frame.opcode, opClose)

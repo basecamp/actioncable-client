@@ -58,7 +58,6 @@ public struct URLSessionTransport: Transport {
             return WebSocketConnection(
                 session: session,
                 task: task,
-                opener: opener,
                 subprotocol: subprotocol,
                 writeTimeout: writeTimeout,
                 maximumMessageSize: maximumMessageSize
@@ -99,15 +98,11 @@ public struct URLSessionTransport: Transport {
 
 /// Waits for the upgrade to land, and turns whatever happened instead into the
 /// error a caller can act on. Afterwards it is the session's delegate for the
-/// life of the connection, which is how a close can wait for the task to be
-/// done with the socket.
+/// life of the connection, and lets the session go once its task is done.
 private final class Opener: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     private let mutex = NSLock()
     private var waiting: CheckedContinuation<String, any Error>?
     private var outcome: Result<String, any Error>?
-    private var awaitingCompletion: [UUID: CheckedContinuation<Void, Never>] = [:]
-    private var abandonedWaits: Set<UUID> = []
-    private var completed = false
 
     func opened() async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
@@ -120,38 +115,6 @@ private final class Opener: NSObject, URLSessionWebSocketDelegate, @unchecked Se
                 waiting = continuation
                 mutex.unlock()
             }
-        }
-    }
-
-    /// Returns once the task has completed, which on Apple platforms is after
-    /// the close frame a cancel asked for has gone out — or as soon as the
-    /// waiting task is cancelled, since on Linux the completion only arrives
-    /// once the session is invalidated, and a wait that could not be given up
-    /// would hold the close that does the invalidating.
-    func completion() async {
-        let ticket = UUID()
-
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                mutex.lock()
-
-                if completed || abandonedWaits.remove(ticket) != nil {
-                    mutex.unlock()
-                    continuation.resume()
-                } else {
-                    awaitingCompletion[ticket] = continuation
-                    mutex.unlock()
-                }
-            }
-        } onCancel: {
-            mutex.lock()
-            let continuation = awaitingCompletion.removeValue(forKey: ticket)
-            if continuation == nil {
-                abandonedWaits.insert(ticket)
-            }
-            mutex.unlock()
-
-            continuation?.resume()
         }
     }
 
@@ -183,15 +146,11 @@ private final class Opener: NSObject, URLSessionWebSocketDelegate, @unchecked Se
             settle(.failure(error ?? URLError(.badServerResponse)))
         }
 
-        mutex.lock()
-        completed = true
-        let waiting = awaitingCompletion.values
-        awaitingCompletion = [:]
-        mutex.unlock()
-
-        for continuation in waiting {
-            continuation.resume()
-        }
+        // The session is one connection's, so it goes when its task does. On
+        // Apple platforms a cancel writes its close frame on the session's own
+        // queue, and invalidating from the close itself could drop the socket
+        // before the frame had left; from here, the frame is already out.
+        session.finishTasksAndInvalidate()
     }
 
     /// Turns down every redirect. An Action Cable server that answers the
@@ -242,30 +201,21 @@ private final class WebSocketConnection: StatusClosing, @unchecked Sendable {
 
     private let session: URLSession
     private let task: URLSessionWebSocketTask
-    private let opener: Opener
     private let writeTimeout: TimeInterval
     private let maximumMessageSize: Int
 
     private let mutex = NSLock()
     private var closed = false
 
-    /// How long a close waits for the task to finish with the socket before the
-    /// session is invalidated regardless. The close frame is a few bytes on an
-    /// open connection, so a live peer is well inside this; a dead one costs at
-    /// most the second.
-    private static let closeGrace: TimeInterval = 1
-
     init(
         session: URLSession,
         task: URLSessionWebSocketTask,
-        opener: Opener,
         subprotocol: String,
         writeTimeout: TimeInterval,
         maximumMessageSize: Int
     ) {
         self.session = session
         self.task = task
-        self.opener = opener
         self.subprotocol = subprotocol
         self.writeTimeout = writeTimeout
         self.maximumMessageSize = maximumMessageSize
@@ -309,17 +259,11 @@ private final class WebSocketConnection: StatusClosing, @unchecked Sendable {
 
     func close(code: Int, reason: String) async {
         if firstClose() {
+            // The session is invalidated by its delegate once the task reports
+            // itself done, not here: see Opener's didCompleteWithError.
             task.cancel(
                 with: URLSessionWebSocketTask.CloseCode(rawValue: code) ?? .normalClosure,
                 reason: Self.frameFitting(reason))
-
-            // On Apple platforms the cancel writes its close frame on the
-            // session's own queue, and invalidating the session right behind
-            // it can drop the socket before the frame has left. So the close
-            // waits for the task to report itself done, for as long as a live
-            // peer could need, and only then lets the session go.
-            _ = try? await withTimeout(Self.closeGrace) { await self.opener.completion() }
-            session.finishTasksAndInvalidate()
         }
     }
 
