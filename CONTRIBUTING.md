@@ -52,9 +52,9 @@ helping! ❤️
 There is one client per language, each in its own directory: `go/`,
 `typescript/`, `python/`, `ruby/`, `kotlin/`, `rust/` and `swift/`. They are
 all the Go client in another language, so a change to what a client *does*
-is a change to all seven. [PORTING.md](PORTING.md) is the specification they
-share: the public surface, the defaults, and the tests every one of them owes
-`go/*_test.go`.
+is a change to all seven. The Go client is the specification they share: the
+public surface, the defaults, and the tests, every one of which in
+`go/*_test.go` has a counterpart in each of the other six.
 
 Each directory builds and tests on its own, and the root Makefile runs them:
 
