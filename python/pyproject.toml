@@ -27,7 +27,7 @@ Documentation = "https://github.com/basecamp/actioncable-client/tree/main/python
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
-    "ruff>=0.4",
+    "ruff>=0.16.9",
     "mypy>=1.10",
 ]
 
