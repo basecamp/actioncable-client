@@ -102,6 +102,8 @@ jobs:
     name: Publish to GitHub Packages
     needs: [test]
     if: github.event_name == 'push'
+    # Publishes only after a required reviewer approves (repo Settings > Environments).
+    environment: release-github-packages
     runs-on: ubuntu-latest
     permissions:
       contents: read
