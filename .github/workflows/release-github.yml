@@ -21,6 +21,7 @@ jobs:
     name: Wait for the language publishes
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 340
     permissions:
       actions: read
     steps:
@@ -33,7 +34,7 @@ jobs:
           # set up (RELEASING.md); add each here when its push trigger returns.
           WORKFLOWS=("release-go.yml" "release-rust.yml")
           TAG="${GITHUB_REF#refs/tags/}"
-          MAX_WAIT=1800  # 30 minutes
+          MAX_WAIT=19800  # 5.5 hours: each publish now waits for a reviewer's approval
           POLL=30
           ELAPSED=0
 
@@ -100,6 +101,8 @@ jobs:
     name: Create release
     needs: [wait-for-publishes]
     if: always() && (needs.wait-for-publishes.result == 'success' || needs.wait-for-publishes.result == 'skipped')
+    # Publishes only after a required reviewer approves (repo Settings > Environments).
+    environment: release-github
     runs-on: ubuntu-latest
     permissions:
       contents: write
