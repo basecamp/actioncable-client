@@ -25,10 +25,10 @@ Documentation = "https://github.com/basecamp/actioncable-client/tree/main/python
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
-    "ruff>=0.4",
-    "mypy>=1.10",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "ruff>=0.17.3",
+    "mypy>=2.4.1",
 ]
 
 [tool.hatch.build.targets.wheel]
